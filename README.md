@@ -142,7 +142,13 @@ docker-compose up -d
 Airflow UI will be available at `http://localhost:8080`
 Default credentials: `airflow / airflow`
 
-Wait 1-2 minutes for all services to become healthy before proceeding.
+Wait 1-2 minutes for all services to become healthy. You can check with:
+
+```bash
+docker-compose ps
+```
+
+All services should show `(healthy)` status before proceeding.
 
 ### 5. Configure Airflow Variables
 
@@ -184,6 +190,20 @@ Three CSVs are produced per run, timestamped and stored in separate S3 prefixes:
 - `album_transformed_<timestamp>.csv` — album ID, name, release date, total tracks, URL
 - `artist_transformed_<timestamp>.csv` — artist ID, name, external URL
 - `songs_transformed_<timestamp>.csv` — song ID, name, duration, popularity, added date, album ID, artist ID
+
+---
+
+## Troubleshooting
+
+| Issue | Fix |
+|---|---|
+| Tasks fail with `Signature verification failed` | Run `docker-compose down -v && docker-compose up -d` to regenerate the shared config |
+| Tasks fail with `Network is unreachable` | Your Docker containers have no internet. Restart Docker Desktop and try again |
+| `Variable not found` error | Make sure you added both Spotify variables in **Admin → Variables** (Step 5) |
+| S3 access denied | Verify the AWS Connection credentials in **Admin → Connections** (Step 6) and that your IAM user has `AmazonS3FullAccess` |
+| DAG not visible in UI | Wait 1-2 minutes for the DAG processor to parse the file. Check `docker-compose ps` for healthy services |
+
+> **Note:** The `config/` directory is auto-generated on first run by Airflow and contains an `airflow.cfg` with auto-generated secrets. It is gitignored and should not be committed. If you run into auth issues, delete it and restart: `rm -rf config/ && docker-compose down -v && docker-compose up -d`
 
 ---
 
