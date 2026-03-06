@@ -95,9 +95,9 @@ spotify-etl-pipeline-sumanth-dec25/
 ## Setup
 
 ### Prerequisites
-- Docker and Docker Compose
-- Spotify Developer account — [Create an app](https://developer.spotify.com/dashboard)
-- AWS account with an S3 bucket and IAM credentials
+- Docker and Docker Compose installed
+- A Spotify Developer account
+- An AWS account (free tier works)
 
 ### 1. Clone the repo
 
@@ -106,38 +106,70 @@ git clone https://github.com/sumanthmalipeddi/spotify-etl-aws-airflow.git
 cd spotify-etl-aws-airflow
 ```
 
-### 2. Start Airflow
+### 2. Create a Spotify App
+
+1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+2. Click **Create App**
+3. Fill in any name and description, set redirect URI to `http://localhost`
+4. Copy the **Client ID** and **Client Secret** — you'll need these in Step 5
+
+### 3. Set up AWS S3 Bucket and IAM User
+
+**Create an S3 Bucket:**
+1. Go to AWS Console → S3 → **Create bucket**
+2. Bucket name: pick any unique name (e.g. `spotify-etl-pipeline-yourname`)
+3. Region: choose your preferred region
+4. Leave all other settings as default → **Create bucket**
+
+**Create an IAM User with S3 access:**
+1. Go to AWS Console → IAM → Users → **Create user**
+2. Username: `airflow-s3-user`
+3. Click Next → Select **Attach policies directly**
+4. Search and select `AmazonS3FullAccess` → Next → **Create user**
+5. Click on the user → **Security credentials** tab → **Create access key**
+6. Select **Third-party service** → confirm → Next → **Create access key**
+7. Copy the **Access Key ID** and **Secret Access Key** — you'll need these in Step 6
+
+> **Important:** If you use your own bucket name, update the `bucket_name` value in `dags/spotify_etl_pipeline.py` (search for `spotify-etl-pipeline-sumanth-dec25` and replace it with yours).
+
+### 4. Start Airflow
 
 ```bash
+docker-compose build
 docker-compose up -d
 ```
 
 Airflow UI will be available at `http://localhost:8080`
 Default credentials: `airflow / airflow`
 
-### 3. Configure Airflow Variables
+Wait 1-2 minutes for all services to become healthy before proceeding.
 
-Go to **Admin → Variables** and add:
+### 5. Configure Airflow Variables
+
+Go to **Admin → Variables** and add these two entries:
 
 | Key | Value |
 |---|---|
-| `spotify_client_id` | Your Spotify app client ID |
-| `spotify_client_secret` | Your Spotify app client secret |
+| `spotify_client_id` | Client ID from Step 2 |
+| `spotify_client_secret` | Client Secret from Step 2 |
 
-### 4. Configure Airflow Connection
+### 6. Configure AWS Connection
 
-Go to **Admin → Connections → Add**:
+Go to **Admin → Connections → Add** (click the `+` button):
 
 | Field | Value |
 |---|---|
-| Conn ID | `aws_s3_airbnb` |
+| Conn ID | `aws_s3_spotify` |
 | Conn Type | `Amazon Web Services` |
-| Login | AWS Access Key ID |
-| Password | AWS Secret Access Key |
+| Login | Access Key ID from Step 3 |
+| Password | Secret Access Key from Step 3 |
 
-### 5. Trigger the DAG
+### 7. Trigger the DAG
 
-Enable `spotify_etl_dag_airflow` in the Airflow UI and trigger a run manually or let the daily schedule handle it.
+1. Go to the **DAGs** page in Airflow UI
+2. Find `spotify_etl_dag_airflow` and toggle it **ON**
+3. Click the **play button** (trigger) to run it manually
+4. Click on the DAG run to monitor task progress — all 10 tasks should turn green
 
 ---
 

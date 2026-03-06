@@ -42,7 +42,7 @@ def _upload_raw_to_s3(**kwargs):
     ti = kwargs['ti']
     filename = ti.xcom_pull(task_ids='fetch_spotify_data', key = 'spotify_filename')
     tmp_path = ti.xcom_pull(task_ids = 'fetch_spotify_data', key = 'tmp_path')
-    s3_hook = S3Hook(aws_conn_id="aws_s3_airbnb" )
+    s3_hook = S3Hook(aws_conn_id="aws_s3_spotify" )
     s3_hook.load_file(
         filename = tmp_path,
         key = f'raw_data/to_processed/{filename}',
@@ -51,7 +51,7 @@ def _upload_raw_to_s3(**kwargs):
     )
     
 def _read_data_from_s3(**kwargs):
-    s3_hook = S3Hook(aws_conn_id="aws_s3_airbnb")
+    s3_hook = S3Hook(aws_conn_id="aws_s3_spotify")
     bucket_name = "spotify-etl-pipeline-sumanth-dec25"
     prefix = "raw_data/to_processed"
     keys = s3_hook.list_keys(bucket_name=bucket_name, prefix=prefix)
@@ -130,7 +130,7 @@ def _process_songs(**kwargs):
     kwargs['ti'].xcom_push(key = "song_content", value = song_content)        
 
 def _move_processed_data(**kwargs):
-    s3_hook = S3Hook(aws_conn_id="aws_s3_airbnb")
+    s3_hook = S3Hook(aws_conn_id="aws_s3_spotify")
     bucket_name = "spotify-etl-pipeline-sumanth-dec25"
     prefix = "raw_data/to_processed/"
     target_prefix = "raw_data/processed/"
@@ -183,7 +183,7 @@ process_album = PythonOperator(
 
 store_album_to_s3 = S3CreateObjectOperator(
     task_id = 'store_album_to_s3',
-    aws_conn_id = "aws_s3_airbnb",
+    aws_conn_id = "aws_s3_spotify",
     s3_bucket = "spotify-etl-pipeline-sumanth-dec25",
     s3_key = "transformed_data/album_data/album_transformed_{{ts_nodash}}.csv",
     data = "{{ task_instance.xcom_pull( task_ids = 'process_album' , key = 'album_content')}}",
@@ -199,7 +199,7 @@ process_artist = PythonOperator(
 
 store_artist_to_s3 = S3CreateObjectOperator(
     task_id = 'store_artist_to_s3',
-    aws_conn_id = "aws_s3_airbnb",
+    aws_conn_id = "aws_s3_spotify",
     s3_bucket = "spotify-etl-pipeline-sumanth-dec25",
     s3_key = "transformed_data/artist_data/artist_transformed_{{ts_nodash}}.csv",
     data = "{{ task_instance.xcom_pull(task_ids='process_artist', key='artist_content') }}",
@@ -215,7 +215,7 @@ process_songs = PythonOperator(
 
 store_songs_to_s3 = S3CreateObjectOperator(
     task_id = 'store_songs_to_s3',
-    aws_conn_id = "aws_s3_airbnb",
+    aws_conn_id = "aws_s3_spotify",
     s3_bucket = "spotify-etl-pipeline-sumanth-dec25",
     s3_key = "transformed_data/songs_data/songs_transformed_{{ts_nodash}}.csv",
     data = "{{ task_instance.xcom_pull(task_ids='process_songs', key='song_content') }}",
