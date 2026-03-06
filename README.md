@@ -209,4 +209,9 @@ Three CSVs are produced per run, timestamped and stored in separate S3 prefixes:
 
 ## Project History
 
-This project was originally built using AWS Lambda + CloudWatch for a fully serverless approach. The Lambda version and original exploration notebook are preserved in the [`archive/`](archive/) folder for reference.
+This project evolved through two phases:
+
+1. **Phase 1 — Serverless:** AWS Lambda + CloudWatch for extraction and transformation. Hit limitations with observability, dependency management, and debugging. Original files preserved on the [`phase1-lambda`](https://github.com/sumanthmalipeddi/spotify-etl-aws-airflow/tree/phase1-lambda) branch.
+2. **Phase 2 — Airflow:** Migrated to Airflow 3.x with CeleryExecutor for DAG-based orchestration, parallel transforms, retry logic, and a unified monitoring UI.
+
+See [DESIGN_DOC.md](DESIGN_DOC.md) for the full architecture evolution and trade-off analysis.
