@@ -77,6 +77,11 @@ def _upload_raw_to_s3(**kwargs):
 
 
 def _read_data_from_s3(**kwargs):
+    """Read all raw JSON files from S3 and consolidate to a /tmp file.
+
+    Pushes only the file path via XCom (not the data itself) to keep the
+    Airflow metadata DB lightweight. See DESIGN_DOC.md Section 3.
+    """
     config = _get_config()
     s3_hook = S3Hook(aws_conn_id=CONN_ID)
     prefix = "raw_data/to_processed"
@@ -91,12 +96,22 @@ def _read_data_from_s3(**kwargs):
         data = s3_hook.read_key(key, config["bucket_name"])
         spotify_data.append(json.loads(data))
 
-    logger.info("Read %d raw files from S3", len(spotify_data))
-    kwargs["ti"].xcom_push(key="spotify_data", value=spotify_data)
+    # Write consolidated data to /tmp instead of pushing through XCom.
+    # XCom stores values in the metadata DB (PostgreSQL) — pushing ~500KB+
+    # of raw JSON per run degrades DB performance over time.
+    tmp_path = "/tmp/spotify_consolidated.json"
+    with open(tmp_path, "w") as f:
+        json.dump(spotify_data, f)
+
+    logger.info("Read %d raw files from S3, consolidated to %s", len(spotify_data), tmp_path)
+    kwargs["ti"].xcom_push(key="spotify_data_path", value=tmp_path)
 
 
 def _process_album(**kwargs):
-    spotify_data = kwargs["ti"].xcom_pull(task_ids="read_data_from_s3", key="spotify_data")
+    data_path = kwargs["ti"].xcom_pull(task_ids="read_data_from_s3", key="spotify_data_path")
+    with open(data_path, "r") as f:
+        spotify_data = json.load(f)
+
     album_list = []
     for data in spotify_data:
         for row in data["items"]:
@@ -111,9 +126,9 @@ def _process_album(**kwargs):
 
     album_df = pd.DataFrame(album_list)
     album_df = album_df.drop_duplicates(subset=["album_id"])
-    album_df["release_date"] = pd.to_datetime(album_df["release_date"])
+    album_df["release_date"] = pd.to_datetime(album_df["release_date"], format="mixed")
 
-    _validate(album_df, "album_id", "album")
+    _validate(album_df, "album_id", "album", date_column="release_date")
 
     tmp_path = "/tmp/album_transformed.parquet"
     album_df.to_parquet(tmp_path, index=False, engine="pyarrow")
@@ -121,7 +136,10 @@ def _process_album(**kwargs):
 
 
 def _process_artist(**kwargs):
-    spotify_data = kwargs["ti"].xcom_pull(task_ids="read_data_from_s3", key="spotify_data")
+    data_path = kwargs["ti"].xcom_pull(task_ids="read_data_from_s3", key="spotify_data_path")
+    with open(data_path, "r") as f:
+        spotify_data = json.load(f)
+
     artist_list = []
     for data in spotify_data:
         for row in data["items"]:
@@ -129,7 +147,7 @@ def _process_artist(**kwargs):
                 artist_list.append({
                     "artist_id": artist["id"],
                     "artist_name": artist["name"],
-                    "external_url": artist["href"],
+                    "external_url": artist["external_urls"]["spotify"],
                 })
 
     artist_df = pd.DataFrame(artist_list)
@@ -143,7 +161,10 @@ def _process_artist(**kwargs):
 
 
 def _process_songs(**kwargs):
-    spotify_data = kwargs["ti"].xcom_pull(task_ids="read_data_from_s3", key="spotify_data")
+    data_path = kwargs["ti"].xcom_pull(task_ids="read_data_from_s3", key="spotify_data_path")
+    with open(data_path, "r") as f:
+        spotify_data = json.load(f)
+
     song_list = []
     for data in spotify_data:
         for row in data["items"]:
@@ -160,6 +181,7 @@ def _process_songs(**kwargs):
             })
 
     song_df = pd.DataFrame(song_list)
+    song_df = song_df.drop_duplicates(subset=["song_id"])
 
     _validate(song_df, "song_id", "songs")
 
@@ -168,8 +190,8 @@ def _process_songs(**kwargs):
     kwargs["ti"].xcom_push(key="song_path", value=tmp_path)
 
 
-def _validate(df, pk_column, dataset_name):
-    """Data quality checks: row count, null PKs, duplicates."""
+def _validate(df, pk_column, dataset_name, date_column=None):
+    """Data quality checks: row count, null PKs, duplicates, date validity."""
     if len(df) == 0:
         raise ValueError(f"{dataset_name}: empty dataframe - 0 rows")
     null_count = df[pk_column].isnull().sum()
@@ -178,6 +200,10 @@ def _validate(df, pk_column, dataset_name):
     dup_count = df[pk_column].duplicated().sum()
     if dup_count > 0:
         raise ValueError(f"{dataset_name}: {dup_count} duplicate {pk_column} values after dedup")
+    if date_column and date_column in df.columns:
+        nat_count = df[date_column].isna().sum()
+        if nat_count > 0:
+            raise ValueError(f"{dataset_name}: {nat_count} unparseable dates in {date_column}")
     logger.info("%s: validated %d rows, 0 nulls, 0 duplicates", dataset_name, len(df))
 
 

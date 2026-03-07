@@ -45,11 +45,11 @@ Migrated to Airflow 3.x with CeleryExecutor running in Docker Compose.
 
 ### XCom for data passing vs. shared storage
 
-**Decision:** Use XCom for metadata (filenames, S3 keys) and `/tmp` files for actual data.
+**Decision:** Use XCom for metadata (filenames, S3 keys, file paths) and `/tmp` files for actual data.
 
 **Why not XCom for everything?** Airflow stores XCom values in the metadata database (PostgreSQL). The raw Spotify JSON for a 100-track playlist is ~500KB. While this fits in XCom, it's an anti-pattern — the metadata DB shouldn't be a data lake. For larger playlists or higher frequency, this would degrade Airflow performance.
 
-**The approach:** The fetch task writes JSON to `/tmp/{filename}` and pushes only the filename via XCom. The upload task reads from `/tmp` and sends to S3. Downstream tasks read from S3 directly. This keeps XCom lightweight (string values only) while avoiding shared filesystem dependencies.
+**The approach:** Every task that handles data writes it to `/tmp` and pushes only the file path via XCom. The fetch task writes raw JSON to `/tmp/{filename}`. The read task consolidates all S3 files into `/tmp/spotify_consolidated.json`. Each transform task writes Parquet to `/tmp/{dataset}_transformed.parquet`. This keeps XCom lightweight (string values only) while avoiding shared filesystem dependencies.
 
 ### CSV vs. Parquet
 
@@ -75,6 +75,8 @@ This creates an implicit "inbox/archive" pattern. If the transform step fails, t
 
 This separates configuration from code. A new user clones the repo, sets their own bucket name in the Airflow UI, and the pipeline works without touching Python code. It also means the same DAG code can run in dev/staging/prod with different Variable values.
 
+The code uses `Variable.get("s3_bucket_name", default_var="spotify-etl-pipeline-sumanth-dec25")` — the default fallback means the pipeline works out of the box for my setup, but any user can override it via the Airflow Variables UI without modifying code.
+
 ---
 
 ## 4. Data Quality
@@ -84,7 +86,7 @@ Each transform branch includes a validation step that checks:
 - **Row count > 0** — ensures the Spotify API returned data
 - **No null primary keys** — `album_id`, `artist_id`, `song_id` must be present
 - **No duplicates on primary key** — deduplication is applied, then verified
-- **Date validation** — `release_date` must parse as a valid date
+- **Date validation** — for datasets with date columns (albums), `release_date` is parsed with `pd.to_datetime()` before validation. The `_validate()` function then checks for any `NaT` values that indicate unparseable dates. This two-step approach gives a clean error message ("3 unparseable dates in release_date") rather than a cryptic pandas traceback
 
 If any check fails, the task raises an exception, which prevents the corresponding `store_*_to_s3` task from running. This fail-fast approach ensures only validated data reaches S3.
 

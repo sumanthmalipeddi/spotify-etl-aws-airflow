@@ -1,6 +1,6 @@
 # Spotify ETL Pipeline — Apache Airflow + AWS S3
 
-An end-to-end data engineering pipeline that extracts track, album, and artist data from a Spotify playlist daily, transforms it into structured CSVs, and loads them into AWS S3 — orchestrated entirely with Apache Airflow running in Docker.
+Production-grade ETL pipeline with fault-tolerant orchestration, parallel transforms, data quality validation, and Parquet output — migrated from a serverless Lambda architecture after hitting observability and dependency management limitations. See [DESIGN_DOC.md](DESIGN_DOC.md) for architectural decisions and root cause analysis of bugs fixed.
 
 ---
 
@@ -29,12 +29,13 @@ The pipeline runs on a daily schedule via an Airflow DAG with 10 tasks across 4 
 - Saves raw JSON locally in `/tmp` and uploads it to `s3://spotify-etl-pipeline-sumanth-dec25/raw_data/to_processed/`
 
 **2. Read**
-- Reads all raw JSON files from S3 and pushes the data downstream via Airflow XCom
+- Reads all raw JSON files from S3 and consolidates them to a `/tmp` file
+- Pushes only the file path via XCom to keep the metadata DB lightweight
 
 **3. Transform**
 - Three parallel tasks process albums, artists, and songs independently
-- Deduplicates records, parses dates, and serialises each dataset as a CSV
-- Uploads transformed CSVs to `s3://.../transformed_data/{album_data | artist_data | songs_data}/`
+- Deduplicates records, parses dates, and validates data quality (null checks, duplicate checks, date validation)
+- Writes each dataset as Parquet to `/tmp` and uploads to `s3://.../transformed_data/{album_data | artist_data | songs_data}/`
 
 **4. Archive**
 - Moves processed raw files from `raw_data/to_processed/` to `raw_data/processed/` and deletes the originals
@@ -51,13 +52,13 @@ The pipeline runs on a daily schedule via an Airflow DAG with 10 tasks across 4 
 |---|---|---|
 | `fetch_spotify_data` | PythonOperator | Calls Spotify API, writes raw JSON to /tmp |
 | `upload_raw_to_s3` | PythonOperator | Uploads raw JSON file to S3 |
-| `read_data_from_s3` | PythonOperator | Reads all files from S3 to_processed prefix |
-| `process_album` | PythonOperator | Extracts and deduplicates album records |
-| `process_artist` | PythonOperator | Extracts and deduplicates artist records |
-| `process_songs` | PythonOperator | Extracts song records with album/artist IDs |
-| `store_album_to_s3` | S3CreateObjectOperator | Uploads album CSV to S3 |
-| `store_artist_to_s3` | S3CreateObjectOperator | Uploads artist CSV to S3 |
-| `store_songs_to_s3` | S3CreateObjectOperator | Uploads songs CSV to S3 |
+| `read_data_from_s3` | PythonOperator | Reads all files from S3, consolidates to /tmp |
+| `process_album` | PythonOperator | Extracts, deduplicates, and validates album records |
+| `process_artist` | PythonOperator | Extracts, deduplicates, and validates artist records |
+| `process_songs` | PythonOperator | Extracts, deduplicates, and validates song records |
+| `store_album_to_s3` | PythonOperator | Uploads album Parquet to S3 |
+| `store_artist_to_s3` | PythonOperator | Uploads artist Parquet to S3 |
+| `store_songs_to_s3` | PythonOperator | Uploads songs Parquet to S3 |
 | `move_processed_data` | PythonOperator | Archives raw JSON from to_processed → processed |
 
 ---
@@ -70,9 +71,9 @@ spotify-etl-pipeline-sumanth-dec25/
 │   ├── to_processed/        ← raw JSON lands here
 │   └── processed/           ← moved here after transformation
 └── transformed_data/
-    ├── album_data/          ← album CSVs
-    ├── artist_data/         ← artist CSVs
-    └── songs_data/          ← song CSVs
+    ├── album_data/          ← album Parquet files
+    ├── artist_data/         ← artist Parquet files
+    └── songs_data/          ← song Parquet files
 ```
 
 <p align="center">
@@ -83,11 +84,11 @@ spotify-etl-pipeline-sumanth-dec25/
 
 ## Tech Stack
 
-- **Orchestration:** Apache Airflow 3.x
+- **Orchestration:** Apache Airflow 3.x (CeleryExecutor + Redis)
 - **Containerisation:** Docker + Docker Compose
 - **Cloud Storage:** AWS S3
 - **Language:** Python 3.12
-- **Key Libraries:** `spotipy`, `pandas`, `apache-airflow-providers-amazon`
+- **Key Libraries:** `spotipy`, `pandas`, `pyarrow`, `apache-airflow-providers-amazon`
 - **Data Source:** Spotify Web API
 
 ---
@@ -130,7 +131,7 @@ cd spotify-etl-aws-airflow
 6. Select **Third-party service** → confirm → Next → **Create access key**
 7. Copy the **Access Key ID** and **Secret Access Key** — you'll need these in Step 6
 
-> **Important:** If you use your own bucket name, update the `bucket_name` value in `dags/spotify_etl_pipeline.py` (search for `spotify-etl-pipeline-sumanth-dec25` and replace it with yours).
+> **Note:** If you use your own bucket name, you can either update the default in the code or set it via **Admin → Variables** with key `s3_bucket_name`. The pipeline checks Variables first and falls back to the default.
 
 ### 4. Start Airflow
 
@@ -185,11 +186,11 @@ Go to **Admin → Connections → Add** (click the `+` button):
   <img src="images/s3_transformed.png" width="100%" />
 </p>
 
-Three CSVs are produced per run, timestamped and stored in separate S3 prefixes:
+Three Parquet files are produced per run, timestamped and stored in separate S3 prefixes:
 
-- `album_transformed_<timestamp>.csv` — album ID, name, release date, total tracks, URL
-- `artist_transformed_<timestamp>.csv` — artist ID, name, external URL
-- `songs_transformed_<timestamp>.csv` — song ID, name, duration, popularity, added date, album ID, artist ID
+- `album_transformed_<timestamp>.parquet` — album ID, name, release date, total tracks, URL
+- `artist_transformed_<timestamp>.parquet` — artist ID, name, external URL
+- `songs_transformed_<timestamp>.parquet` — song ID, name, duration, popularity, added date, album ID, artist ID
 
 ---
 
