@@ -7,7 +7,7 @@ Production-grade ETL pipeline with fault-tolerant orchestration, parallel transf
 ## Architecture
 
 <p align="center">
-  <img src="images/excalidraw_architecture.png" width="100%" />
+  <img src="images/mermaid_architecture.png" width="100%" />
 </p>
 
 ---

@@ -9,3 +9,5 @@ logs/
 output/
 .ipynb_checkpoints/
 config/
+architecture_prompt.txt
+architecture.mmd
